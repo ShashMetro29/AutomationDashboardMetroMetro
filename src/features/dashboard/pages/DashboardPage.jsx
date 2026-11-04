@@ -50,12 +50,12 @@ import { applications, countries } from "../../../data/dummyData";
 
 import austriaFlag from "../../../assets/austria_new.png";
 import belgiumFlag from "../../../assets/belgium.jpg";
-import franceFlag from "../../../assets/France_new.png";
+import franceFlag from "../../../assets/France.png";
 import germanyFlag from "../../../assets/germany.png";
 import italyFlag from "../../../assets/italy.jpg";
 import netherlandsFlag from "../../../assets/netherlands.png";
 import portugalFlag from "../../../assets/portugal.png";
-import spainFlag from "../../../assets/spain_new.jpg";
+import spainFlag from "../../../assets/Spain.png";
 
 const COLORS = {
   metroBlue: "#002D72",
