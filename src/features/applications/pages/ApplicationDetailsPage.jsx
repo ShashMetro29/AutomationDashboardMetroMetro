@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -6,51 +6,41 @@ import {
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   Divider,
   Grid,
   Link,
-  MenuItem,
-  Select,
   Stack,
-  Tab,
-  Tabs,
   Typography,
 } from "@mui/material";
 import {
   ArrowBack,
-  CheckCircle,
+  Business,
   Cloud,
-  DataUsage,
-  Description,
-  Speed,
+  DescriptionOutlined,
+  Memory,
+  Public,
 } from "@mui/icons-material";
-import {
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { useNavigate, useParams } from "react-router-dom";
-import StatusChip from "../../../components/StatusChip";
-import {
-  applications,
-  countries,
-  incidents,
-  statusDistribution,
-} from "../../../data/dummyData";
+
+import { getStoredAuthSession } from "../../../services/authService";
+import { getApplicationsByCountry } from "../../../services/applicationService";
+
+const normalizeApplication = (application) => ({
+  ...application,
+  id: application.id ?? application.applicationId,
+  countryId: Number(application.country_id ?? application.countryId ?? 0),
+  ownerTeam: application.owner_team ?? application.ownerTeam ?? application.owner ?? "Operations",
+  documentationUrl: application.documentation_url ?? application.documentationUrl ?? "",
+  environments: Array.isArray(application.environments) ? application.environments : [],
+  isActive: application.is_active ?? application.isActive ?? true,
+});
 
 function MetricCard({ title, value, subtitle, icon, color }) {
   return (
-    <Card sx={{ height: "100%", borderRadius: 3 }}>
+    <Card sx={{ height: "100%", borderRadius: 3, boxShadow: "0 12px 22px rgba(15, 23, 42, 0.05)" }}>
       <CardContent>
-        <Stack direction="row" justifyContent="space-between">
+        <Stack direction="row" justifyContent="space-between" spacing={2}>
           <Box>
             <Typography variant="body2" color="text.secondary">
               {title}
@@ -84,319 +74,206 @@ function MetricCard({ title, value, subtitle, icon, color }) {
 
 function ApplicationDetailsPage() {
   const navigate = useNavigate();
-  const { appId } = useParams();
+  const { applicationId } = useParams();
+  const session = getStoredAuthSession();
 
-  const [environment, setEnvironment] = useState(0);
-  const [timeRange, setTimeRange] = useState("24h");
+  const [application, setApplication] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const application =
-    applications.find((item) => item.id === Number(appId)) ||
-    applications[0];
+  const countryId = Number(session?.country?.id || 0);
 
-  const country = countries.find(
-    (item) => item.id === application.countryId
+  useEffect(() => {
+    const fetchApplication = async () => {
+      if (!countryId || !applicationId) {
+        setApplication(null);
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage("");
+
+      try {
+        const apps = await getApplicationsByCountry(countryId);
+        const allApplications = Array.isArray(apps) ? apps.map((item) => normalizeApplication(item)) : [];
+        const selected = allApplications.find((item) => Number(item.id) === Number(applicationId));
+        setApplication(selected || allApplications[0] || null);
+      } catch (error) {
+        setErrorMessage(error?.response?.data?.message || "Unable to load application details.");
+        setApplication(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchApplication();
+  }, [applicationId, countryId]);
+
+  const environmentSummary = useMemo(() => {
+    const environments = Array.isArray(application?.environments) ? application.environments : [];
+
+    return environments.map((environment) => ({
+      id: environment.id,
+      name: environment.name || "Environment",
+      baseUrl: environment.base_url || environment.baseUrl || "Not available",
+      enabled: environment.enabled ?? environment.isActive ?? true,
+      components: Array.isArray(environment.components) ? environment.components : [],
+    }));
+  }, [application]);
+
+  const totalComponents = useMemo(
+    () => environmentSummary.reduce((total, environment) => total + (environment.components || []).length, 0),
+    [environmentSummary]
   );
 
-  const currentStatus =
-    environment === 0
-      ? application.productionStatus
-      : application.preProductionStatus;
+  if (loading) {
+    return (
+      <Box sx={{ py: 8, display: "flex", justifyContent: "center" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <Box>
+        <Alert severity="error" sx={{ borderRadius: 2 }}>{errorMessage}</Alert>
+      </Box>
+    );
+  }
+
+  if (!application) {
+    return (
+      <Box>
+        <Alert severity="info" sx={{ borderRadius: 2 }}>No application details are available for this record.</Alert>
+      </Box>
+    );
+  }
+
+  const countryTitle = session?.country?.name || "Country";
 
   return (
-    <Box>
-      <Button
-        startIcon={<ArrowBack />}
-        onClick={() =>
-          navigate(`/countries/${application.countryId}/apps`)
-        }
-        sx={{ mb: 2 }}
-      >
+    <Box sx={{ pb: 5 }}>
+      <Button startIcon={<ArrowBack />} onClick={() => navigate(`/countries/${countryId}/apps`)} sx={{ mb: 2 }}>
         Back to applications
       </Button>
 
-      <Card sx={{ p: 3, borderRadius: 3, mb: 3 }}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          justifyContent="space-between"
-          gap={2}
-        >
+      <Card sx={{ p: 3, borderRadius: 3, mb: 3, boxShadow: "0 18px 34px rgba(15, 23, 42, 0.08)" }}>
+        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
           <Box>
-            <Stack direction="row" gap={1.5} alignItems="center">
+            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
               <Typography variant="h4" fontWeight={800}>
                 {application.name}
               </Typography>
-              <StatusChip status={currentStatus} />
+              <Chip label={application.isActive ? "ACTIVE" : "INACTIVE"} color={application.isActive ? "success" : "default"} size="small" />
             </Stack>
 
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              {country?.flag} {country?.name} · {application.owner}
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {countryTitle} · {application.ownerTeam}
             </Typography>
 
-            <Typography sx={{ mt: 2 }}>
-              {application.description}
+            <Typography sx={{ mt: 2, maxWidth: 760 }}>
+              {application.description || "No description provided."}
             </Typography>
           </Box>
 
-          <Stack alignItems={{ xs: "flex-start", md: "flex-end" }}>
-            <Link
-              href={application.documentation || "#"}
-              target="_blank"
-              underline="none"
-            >
-              <Button
-                variant="outlined"
-                startIcon={<Description />}
-              >
-                Documentation
-              </Button>
-            </Link>
+          <Stack alignItems={{ xs: "flex-start", md: "flex-end" }} spacing={1}>
+            {application.documentationUrl ? (
+              <Link href={application.documentationUrl} target="_blank" rel="noreferrer" underline="none">
+                <Button variant="outlined" startIcon={<DescriptionOutlined />}>
+                  Documentation
+                </Button>
+              </Link>
+            ) : null}
 
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mt: 1 }}
-            >
-              Last refreshed: {application.lastChecked}
+            <Typography variant="caption" color="text.secondary">
+              Code: {application.code || "-"}
             </Typography>
           </Stack>
         </Stack>
 
         <Divider sx={{ my: 2.5 }} />
 
-        <Tabs
-          value={environment}
-          onChange={(_, value) => setEnvironment(value)}
-        >
-          <Tab label="Production" />
-          <Tab label="Pre-production" />
-        </Tabs>
+        <Typography variant="subtitle1" fontWeight={800}>
+          Environment overview
+        </Typography>
       </Card>
 
-      {currentStatus === "DOWN" && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          The selected environment is currently unavailable. An incident
-          has been created.
-        </Alert>
-      )}
+      <Grid container spacing={2.5} sx={{ mb: 2 }}>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+          <MetricCard title="Status" value={application.isActive ? "Active" : "Inactive"} subtitle="Application health state" icon={<Cloud />} color="#2e7d32" />
+        </Grid>
 
-      {currentStatus === "DEGRADED" && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          The selected environment is responding, but one or more health
-          indicators require attention.
-        </Alert>
-      )}
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+          <MetricCard title="Environments" value={environmentSummary.length} subtitle="Configured environments" icon={<Public />} color="#1976d2" />
+        </Grid>
+
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+          <MetricCard title="Components" value={totalComponents} subtitle="Tracked services" icon={<Memory />} color="#7b1fa2" />
+        </Grid>
+
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+          <MetricCard title="Owner team" value={application.ownerTeam} subtitle="Assigned team" icon={<Business />} color="#ed6c02" />
+        </Grid>
+      </Grid>
 
       <Grid container spacing={2.5}>
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <MetricCard
-            title="Application status"
-            value={currentStatus}
-            subtitle="Latest endpoint result"
-            icon={<Cloud />}
-            color={
-              currentStatus === "UP"
-                ? "#2e7d32"
-                : currentStatus === "DOWN"
-                ? "#d32f2f"
-                : "#ed6c02"
-            }
-          />
-        </Grid>
-
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <MetricCard
-            title="Database status"
-            value={application.databaseStatus}
-            subtitle="Connectivity check"
-            icon={<DataUsage />}
-            color="#2e7d32"
-          />
-        </Grid>
-
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <MetricCard
-            title="Response time"
-            value={`${application.responseTime} ms`}
-            subtitle="Latest endpoint latency"
-            icon={<Speed />}
-            color="#1976d2"
-          />
-        </Grid>
-
-        <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <MetricCard
-            title="Availability"
-            value={`${application.uptime}%`}
-            subtitle="Selected reporting period"
-            icon={<CheckCircle />}
-            color="#7b1fa2"
-          />
-        </Grid>
-      </Grid>
-
-      <Grid container spacing={3} sx={{ mt: 0.5 }}>
-        <Grid size={{ xs: 12, lg: 5 }}>
-          <Card sx={{ height: "100%", borderRadius: 3 }}>
-            <CardContent>
-              <Typography variant="h6" fontWeight={800}>
-                Check distribution
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Health-check results for the selected period
-              </Typography>
-
-              <Box sx={{ width: "100%", height: 320 }}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={statusDistribution}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={65}
-                      outerRadius={105}
-                      paddingAngle={4}
-                    >
-                      {statusDistribution.map((entry) => (
-                        <Cell key={entry.name} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid size={{ xs: 12, lg: 7 }}>
-          <Card sx={{ height: "100%", borderRadius: 3 }}>
-            <CardContent>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-              >
-                <Box>
-                  <Typography variant="h6" fontWeight={800}>
-                    Availability and response time
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Historical health-check performance
-                  </Typography>
-                </Box>
-
-                <Select
-                  size="small"
-                  value={timeRange}
-                  onChange={(event) => setTimeRange(event.target.value)}
-                >
-                  <MenuItem value="24h">Last 24 hours</MenuItem>
-                  <MenuItem value="7d">Last 7 days</MenuItem>
-                  <MenuItem value="30d">Last 30 days</MenuItem>
-                </Select>
-              </Stack>
-
-              <Box sx={{ width: "100%", height: 320, mt: 2 }}>
-                <ResponsiveContainer>
-                  <LineChart data={application.history}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="time" />
-                    <YAxis yAxisId="left" domain={[90, 100]} unit="%" />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      unit=" ms"
-                    />
-                    <Tooltip />
-                    <Legend />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="availability"
-                      stroke="#1976d2"
-                      strokeWidth={3}
-                      name="Availability"
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="responseTime"
-                      stroke="#ed6c02"
-                      strokeWidth={3}
-                      name="Response time"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
-      <Card sx={{ mt: 3, borderRadius: 3 }}>
-        <CardContent>
-          <Typography variant="h6" fontWeight={800}>
-            Incident history
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mb={2}>
-            Recent failures, warnings and recovery events
-          </Typography>
-
-          <Stack spacing={2}>
-            {incidents.map((incident) => (
-              <Box
-                key={incident.id}
-                sx={{
-                  p: 2,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 2.5,
-                }}
-              >
-                <Stack
-                  direction={{ xs: "column", md: "row" }}
-                  justifyContent="space-between"
-                  gap={2}
-                >
-                  <Box>
-                    <Stack direction="row" gap={1} alignItems="center">
-                      <Typography fontWeight={700}>
-                        {incident.title}
-                      </Typography>
-
-                      <Chip
-                        size="small"
-                        label={incident.severity}
-                        color={
-                          incident.severity === "Critical"
-                            ? "error"
-                            : incident.severity === "Warning"
-                            ? "warning"
-                            : "info"
-                        }
-                      />
-                    </Stack>
-
-                    <Typography variant="body2" color="text.secondary">
-                      {incident.environment} · Started {incident.started}
+        {environmentSummary.length === 0 ? (
+          <Grid size={{ xs: 12 }}>
+            <Alert severity="info" sx={{ borderRadius: 2 }}>No environments are attached to this application yet.</Alert>
+          </Grid>
+        ) : (
+          environmentSummary.map((environment) => (
+            <Grid key={environment.id} size={{ xs: 12, md: 6 }}>
+              <Card sx={{ height: "100%", borderRadius: 3, boxShadow: "0 14px 26px rgba(15, 23, 42, 0.06)" }}>
+                <CardContent>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                    <Typography variant="h6" fontWeight={800}>
+                      {environment.name}
                     </Typography>
-                  </Box>
-
-                  <Stack alignItems={{ xs: "flex-start", md: "flex-end" }}>
-                    <Typography fontWeight={700}>
-                      {incident.status}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Duration: {incident.duration}
-                    </Typography>
+                    <Chip label={environment.enabled ? "Enabled" : "Disabled"} color={environment.enabled ? "success" : "default"} size="small" />
                   </Stack>
-                </Stack>
-              </Box>
-            ))}
-          </Stack>
-        </CardContent>
-      </Card>
+
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Base URL: {environment.baseUrl}
+                  </Typography>
+
+                  {environment.components.length === 0 ? (
+                    <Alert severity="info" sx={{ borderRadius: 2 }}>No components have been registered for this environment.</Alert>
+                  ) : (
+                    <Stack spacing={1.5}>
+                      {environment.components.map((component) => (
+                        <Box
+                          key={component.id}
+                          sx={{
+                            p: 1.6,
+                            border: "1px solid rgba(148, 163, 184, 0.35)",
+                            borderRadius: 2,
+                            backgroundColor: "rgba(15, 23, 42, 0.015)",
+                          }}
+                        >
+                          <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                            <Typography fontWeight={700}>{component.name}</Typography>
+                            <Chip label={component.is_critical ? "Critical" : "Standard"} size="small" color={component.is_critical ? "error" : "default"} />
+                          </Stack>
+
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            {component.component_type || component.componentType} · {component.technology} {component.version}
+                          </Typography>
+
+                          <Typography variant="body2" color="text.secondary">
+                            {component.host_name || component.hostName}:{component.port}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Stack>
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>
+          ))
+        )}
+      </Grid>
     </Box>
   );
 }

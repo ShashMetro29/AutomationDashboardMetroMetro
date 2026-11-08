@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
+  Alert,
   Box,
   Button,
+  CircularProgress,
   Container,
   Divider,
   IconButton,
@@ -25,6 +27,7 @@ import { Link as RouterLink, useNavigate } from "react-router-dom";
 
 import backgroundImage from "../../../assets/makro-store-background.webp";
 import MakroLogo from "../../../assets/Makro_logo.svg";
+import { setStoredAuthSession, signupUser } from "../../../services/authService";
 
 const COLORS = {
   metroBlue: "#002D72",
@@ -40,16 +43,48 @@ const COLORS = {
   border: "#DEE5EF",
 };
 
-const countries = [
-  "India",
-  "Netherlands",
-  "Germany",
-  "United States",
-  "United Kingdom",
-  "Canada",
-  "France",
-  "Spain",
-];
+const countries =[
+  {
+    "id": 1,
+    "country": "Portugal",
+    "isoCode": "PT"
+  },
+  {
+    "id": 2,
+    "country": "Netherlands",
+    "isoCode": "NL"
+  },
+  {
+    "id": 3,
+    "country": "Germany",
+    "isoCode": "DE"
+  },
+  {
+    "id": 4,
+    "country": "United States",
+    "isoCode": "US"
+  },
+  {
+    "id": 5,
+    "country": "United Kingdom",
+    "isoCode": "GB"
+  },
+  {
+    "id": 6,
+    "country": "Canada",
+    "isoCode": "CA"
+  },
+  {
+    "id": 7,
+    "country": "France",
+    "isoCode": "FR"
+  },
+  {
+    "id": 8,
+    "country": "Spain",
+    "isoCode": "ES"
+  }
+]
 
 const RegistrationPage = () => {
   const [formData, setFormData] = useState({
@@ -61,6 +96,8 @@ const RegistrationPage = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -70,16 +107,56 @@ const RegistrationPage = () => {
     }));
   };
 
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
 
-    if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match");
+    if (!formData.fullName.trim() || !formData.email.trim() || !formData.password || !formData.confirmPassword) {
+      setErrorMessage("Please complete all fields before creating the account.");
       return;
     }
 
-    sessionStorage.setItem("user", JSON.stringify("india"));
-    navigate("/dashboard");
+    if (formData.password !== formData.confirmPassword) {
+      setErrorMessage("Passwords do not match.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const response = await signupUser({
+        email: formData.email.trim(),
+        password: formData.password,
+        display_name: formData.fullName.trim(),
+        country_id:formData.country,
+      });
+
+      const authSession = response?.data ?? {};
+
+      if (authSession?.accessToken && authSession?.user) {
+        setStoredAuthSession({
+          accessToken: authSession.accessToken,
+          tokenType: authSession.tokenType ?? "Bearer",
+          expiresIn: authSession.expiresIn ?? null,
+          user: authSession.user,
+          country: authSession.country ?? null,
+        });
+
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      navigate("/login", { replace: true });
+    } catch (error) {
+      const backendMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Unable to create the account right now. Please try again.";
+
+      setErrorMessage(backendMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -201,6 +278,12 @@ const RegistrationPage = () => {
             </Stack>
 
             <Box component="form" onSubmit={handleRegister} noValidate>
+              {errorMessage ? (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {errorMessage}
+                </Alert>
+              ) : null}
+
               <TextField
                 label="Full name"
                 name="fullName"
@@ -254,8 +337,8 @@ const RegistrationPage = () => {
                 }}
               >
                 {countries.map((country) => (
-                  <MenuItem key={country} value={country}>
-                    {country}
+                  <MenuItem key={country.id} value={country.id}>
+                    {country.country}
                   </MenuItem>
                 ))}
               </TextField>
@@ -323,6 +406,7 @@ const RegistrationPage = () => {
                 type="submit"
                 fullWidth
                 variant="contained"
+                disabled={isSubmitting}
                 sx={{
                   mt: 3,
                   py: 1.4,
@@ -334,7 +418,7 @@ const RegistrationPage = () => {
                   '&:hover': { background: `linear-gradient(135deg, #F8D600, ${COLORS.metroYellow})` },
                 }}
               >
-                Create account
+                {isSubmitting ? <CircularProgress size={20} color="inherit" /> : "Create account"}
               </Button>
 
               <Divider sx={{ my: 2.5, borderColor: "#E7EDF5" }}>

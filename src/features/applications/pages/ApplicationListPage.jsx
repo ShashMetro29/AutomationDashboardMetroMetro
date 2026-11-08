@@ -1,283 +1,497 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Card,
+  CardContent,
+  Checkbox,
+  Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   FormControl,
+  FormControlLabel,
   Grid,
   IconButton,
   InputAdornment,
   InputLabel,
+  Link,
   MenuItem,
   Select,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import {
   Add,
   Apps,
-  Delete,
-  Edit,
+  Business,
+  DescriptionOutlined,
   OpenInNew,
   Search,
 } from "@mui/icons-material";
 import { useNavigate, useParams } from "react-router-dom";
-import StatusChip from "../../../components/StatusChip";
-import { applications, countries } from "../../../data/dummyData";
+
+import { getStoredAuthSession } from "../../../services/authService";
+import {
+  createApplication,
+  createComponent,
+  createEnvironment,
+  getApplicationsByCountry,
+} from "../../../services/applicationService";
+
+const initialFormState = {
+  countryId: "",
+  name: "",
+  code: "",
+  description: "",
+  ownerTeam: "",
+  documentationUrl: "",
+  environmentName: "PRODUCTION",
+  baseUrl: "",
+  componentName: "",
+  componentType: "DATABASE",
+  hostName: "",
+  port: "5432",
+  technology: "",
+  version: "",
+  isCritical: true,
+};
+
+const normalizeApplication = (application) => ({
+  ...application,
+  id: application.id ?? application.applicationId,
+  countryId: Number(application.country_id ?? application.countryId ?? 0),
+  ownerTeam: application.owner_team ?? application.ownerTeam ?? application.owner ?? "Operations",
+  documentationUrl: application.documentation_url ?? application.documentationUrl ?? "",
+  environments: Array.isArray(application.environments) ? application.environments : [],
+  isActive: application.is_active ?? application.isActive ?? true,
+});
 
 function ApplicationListPage() {
   const navigate = useNavigate();
   const { countryId } = useParams();
+  const session = getStoredAuthSession();
 
+  const [applications, setApplications] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [formData, setFormData] = useState(initialFormState);
 
-  const selectedCountry = countries.find(
-    (country) => country.id === countryId
-  );
+  const resolvedCountryId = Number(countryId || session?.country?.id || 0);
+  const selectedCountry = session?.country?.name || "Country";
+
+  const fetchApplications = async () => {
+    if (!resolvedCountryId) {
+      setApplications([]);
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage("");
+
+    try {
+      const response = await getApplicationsByCountry(resolvedCountryId);
+      const normalized = Array.isArray(response)
+        ? response.map((application) => normalizeApplication(application))
+        : [];
+
+      setApplications(normalized);
+    } catch (error) {
+      setErrorMessage(
+        error?.response?.data?.message || "Unable to load applications for this country."
+      );
+      setApplications([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchApplications();
+  }, [resolvedCountryId]);
+
+  useEffect(() => {
+    setFormData((prev) => ({
+      ...prev,
+      countryId: resolvedCountryId ? String(resolvedCountryId) : "",
+    }));
+  }, [resolvedCountryId]);
 
   const filteredApplications = useMemo(() => {
     return applications.filter((application) => {
-      const countryMatches = countryId
-        ? application.countryId === countryId
-        : true;
-
-      const searchMatches =
-        application.name.toLowerCase().includes(search.toLowerCase()) ||
-        application.owner.toLowerCase().includes(search.toLowerCase());
-
+      const countryMatches = !countryId || Number(application.countryId) === resolvedCountryId;
+      const appName = String(application.name || "").toLowerCase();
+      const ownerName = String(application.ownerTeam || "").toLowerCase();
+      const searchText = search.toLowerCase();
+      const searchMatches = appName.includes(searchText) || ownerName.includes(searchText);
       const statusMatches =
         statusFilter === "ALL" ||
-        application.productionStatus === statusFilter;
+        String(application.isActive ? "ACTIVE" : "INACTIVE") === statusFilter;
 
       return countryMatches && searchMatches && statusMatches;
     });
-  }, [countryId, search, statusFilter]);
+  }, [applications, countryId, resolvedCountryId, search, statusFilter]);
+
+  const handleChange = (event) => {
+    const { name, value, type, checked } = event.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
+  };
+
+  const handleApplicationSubmit = async (event) => {
+    event.preventDefault();
+
+    const requiredFields = [
+      formData.name,
+      formData.code,
+      formData.description,
+      formData.ownerTeam,
+      formData.documentationUrl,
+      formData.baseUrl,
+      formData.componentName,
+      formData.hostName,
+      formData.technology,
+      formData.version,
+    ];
+
+    if (requiredFields.some((field) => !String(field).trim())) {
+      setErrorMessage("Please complete all the required application, environment, and component fields.");
+      return;
+    }
+
+    if (!resolvedCountryId) {
+      setErrorMessage("No country is linked to this user. Please log in again.");
+      return;
+    }
+
+    setSubmitting(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const applicationPayload = {
+        countryId: Number(resolvedCountryId),
+        name: formData.name.trim(),
+        code: formData.code.trim(),
+        description: formData.description.trim(),
+        ownerTeam: formData.ownerTeam.trim(),
+        documentationUrl: formData.documentationUrl.trim(),
+      };
+
+      const createdApplication = await createApplication(applicationPayload);
+      const applicationId =
+        createdApplication?.id ??
+        createdApplication?.applicationId ??
+        createdApplication?.data?.id ??
+        createdApplication?.data?.applicationId;
+
+      if (!applicationId) {
+        throw new Error("Application was created without an ID.");
+      }
+
+      const createdEnvironment = await createEnvironment({
+        applicationId: Number(applicationId),
+        name: formData.environmentName,
+        baseUrl: formData.baseUrl.trim(),
+      });
+
+      const environmentId =
+        createdEnvironment?.id ??
+        createdEnvironment?.environmentId ??
+        createdEnvironment?.data?.id ??
+        createdEnvironment?.data?.environmentId;
+
+      if (!environmentId) {
+        throw new Error("Environment was created without an ID.");
+      }
+
+      await createComponent({
+        environmentId: Number(environmentId),
+        name: formData.componentName.trim(),
+        componentType: formData.componentType,
+        hostName: formData.hostName.trim(),
+        port: Number(formData.port),
+        technology: formData.technology.trim(),
+        version: formData.version.trim(),
+        isCritical: Boolean(formData.isCritical),
+      });
+
+      setSuccessMessage("Application, environment, and component were created successfully.");
+      setDialogOpen(false);
+      setFormData(initialFormState);
+      await fetchApplications();
+    } catch (error) {
+      setErrorMessage(
+        error?.response?.data?.message ||
+          error?.message ||
+          "Unable to create the application. Please review the values and try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
-    <Box>
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        justifyContent="space-between"
-        gap={2}
-        mb={3}
-      >
+    <Box sx={{ pb: 4 }}>
+      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} spacing={2} sx={{ mb: 3 }}>
         <Box>
           <Typography variant="h4" fontWeight={800}>
-            {selectedCountry
-              ? `${selectedCountry.flag} ${selectedCountry.name} Applications`
-              : "All Applications"}
+            {selectedCountry ? `${selectedCountry} Applications` : "Applications"}
           </Typography>
-
-          <Typography color="text.secondary">
-            View and manage application health configurations.
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.6 }}>
+            Country-scoped application inventory and environment health overview.
           </Typography>
         </Box>
 
-        <Button
-          variant="contained"
-          startIcon={<Add />}
-          onClick={() => setDialogOpen(true)}
-        >
+        <Button variant="contained" size="large" startIcon={<Add />} onClick={() => setDialogOpen(true)}>
           Add application
         </Button>
       </Stack>
 
-      <Card sx={{ p: 2, mb: 3, borderRadius: 3 }}>
-        <Stack direction={{ xs: "column", sm: "row" }} gap={2}>
+      {errorMessage ? (
+        <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
+          {errorMessage}
+        </Alert>
+      ) : null}
+
+      {successMessage ? (
+        <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>
+          {successMessage}
+        </Alert>
+      ) : null}
+
+      <Card sx={{ p: 2.2, mb: 3, borderRadius: 3, boxShadow: "0 12px 26px rgba(15, 23, 42, 0.04)" }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <TextField
             fullWidth
             size="small"
-            placeholder="Search by application or owner..."
+            placeholder="Search application or team name"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Search />
-                  </InputAdornment>
-                ),
-              },
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search fontSize="small" />
+                </InputAdornment>
+              ),
             }}
           />
 
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Production status</InputLabel>
-            <Select
-              label="Production status"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
+          <FormControl size="small" sx={{ minWidth: 190 }}>
+            <InputLabel>Status</InputLabel>
+            <Select label="Status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <MenuItem value="ALL">All statuses</MenuItem>
-              <MenuItem value="UP">Up</MenuItem>
-              <MenuItem value="DEGRADED">Degraded</MenuItem>
-              <MenuItem value="DOWN">Down</MenuItem>
+              <MenuItem value="ACTIVE">Active</MenuItem>
+              <MenuItem value="INACTIVE">Inactive</MenuItem>
             </Select>
           </FormControl>
         </Stack>
       </Card>
 
-      <Grid container spacing={2.5}>
-        {filteredApplications.map((application) => (
-          <Grid key={application.id} size={{ xs: 12, xl: 6 }}>
-            <Card
-              sx={{
-                p: 2.5,
-                borderRadius: 3,
-                transition: "0.2s",
-                "&:hover": { boxShadow: 6 },
-              }}
-            >
-              <Stack
-                direction={{ xs: "column", sm: "row" }}
-                justifyContent="space-between"
-                gap={2}
-              >
-                <Stack direction="row" gap={2}>
-                  <Box
-                    sx={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 2.5,
-                      bgcolor: "primary.light",
-                      color: "primary.contrastText",
-                      display: "grid",
-                      placeItems: "center",
-                    }}
-                  >
-                    <Apps />
-                  </Box>
+      {loading ? (
+        <Box sx={{ py: 8, display: "flex", justifyContent: "center" }}>
+          <CircularProgress />
+        </Box>
+      ) : (
+        <Grid container spacing={2.5}>
+          {filteredApplications.map((application) => {
+            const componentCount = (application.environments || []).reduce(
+              (total, environment) => total + (environment.components || []).length,
+              0
+            );
+            const environmentCount = (application.environments || []).length;
+            const status = application.isActive ? "ACTIVE" : "INACTIVE";
 
-                  <Box>
-                    <Typography variant="h6" fontWeight={800}>
-                      {application.name}
+            return (
+              <Grid key={application.id} size={{ xs: 12, xl: 6 }}>
+                <Card sx={{ height: "100%", borderRadius: 3, overflow: "hidden", boxShadow: "0 18px 34px rgba(15, 23, 42, 0.08)", border: "1px solid rgba(148, 163, 184, 0.2)" }}>
+                  <CardContent sx={{ p: 2.6 }}>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={2}>
+                      <Stack direction="row" spacing={2} alignItems="center">
+                        <Box sx={{ width: 52, height: 52, borderRadius: 3, background: "linear-gradient(135deg, #1769aa 0%, #42a5f5 100%)", display: "grid", placeItems: "center", color: "#fff" }}>
+                          <Apps />
+                        </Box>
+
+                        <Box>
+                          <Typography variant="h6" fontWeight={800}>
+                            {application.name}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {application.ownerTeam}
+                          </Typography>
+                        </Box>
+                      </Stack>
+
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip label={status} color={application.isActive ? "success" : "default"} size="small" />
+                        <IconButton color="primary" onClick={() => navigate(`/applications/${application.id}`)} aria-label="Open application details">
+                          <OpenInNew />
+                        </IconButton>
+                      </Stack>
+                    </Stack>
+
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2.2, minHeight: 42 }}>
+                      {application.description || "No description provided."}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {application.owner}
-                    </Typography>
-                  </Box>
-                </Stack>
 
-                <Box>
-                  <Tooltip title="Open details">
-                    <IconButton
-                      color="primary"
-                      onClick={() =>
-                        navigate(`/applications/${application.id}`)
-                      }
-                    >
-                      <OpenInNew />
-                    </IconButton>
-                  </Tooltip>
+                    <Grid container spacing={2} sx={{ mt: 0.2 }}>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <Box sx={{ p: 1.4, borderRadius: 2, backgroundColor: "rgba(25, 118, 210, 0.05)", border: "1px solid rgba(25,118,210,0.12)" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Business fontSize="small" color="primary" />
+                            <Typography variant="caption" color="text.secondary">Code</Typography>
+                          </Stack>
+                          <Typography variant="subtitle2" sx={{ mt: 0.6 }}>
+                            {application.code || "-"}
+                          </Typography>
+                        </Box>
+                      </Grid>
 
-                  <Tooltip title="Edit application">
-                    <IconButton>
-                      <Edit />
-                    </IconButton>
-                  </Tooltip>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <Box sx={{ p: 1.4, borderRadius: 2, backgroundColor: "rgba(76, 175, 80, 0.06)", border: "1px solid rgba(76,175,80,0.12)" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <DescriptionOutlined fontSize="small" color="success" />
+                            <Typography variant="caption" color="text.secondary">Environments</Typography>
+                          </Stack>
+                          <Typography variant="subtitle2" sx={{ mt: 0.6 }}>
+                            {environmentCount} configured
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
 
-                  <Tooltip title="Delete application">
-                    <IconButton color="error">
-                      <Delete />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              </Stack>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={1} sx={{ mt: 2.2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Components: <strong>{componentCount}</strong>
+                      </Typography>
 
-              <Typography color="text.secondary" sx={{ mt: 2 }}>
-                {application.description}
-              </Typography>
-
-              <Grid container spacing={2} sx={{ mt: 1 }}>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Production
-                  </Typography>
-                  <Box mt={0.5}>
-                    <StatusChip status={application.productionStatus} />
-                  </Box>
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Pre-production
-                  </Typography>
-                  <Box mt={0.5}>
-                    <StatusChip status={application.preProductionStatus} />
-                  </Box>
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Database
-                  </Typography>
-                  <Box mt={0.5}>
-                    <StatusChip status={application.databaseStatus} />
-                  </Box>
-                </Grid>
+                      {application.documentationUrl ? (
+                        <Link href={application.documentationUrl} target="_blank" rel="noreferrer" underline="hover" sx={{ fontSize: 13 }}>
+                          View documentation
+                        </Link>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          No docs link
+                        </Typography>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
               </Grid>
+            );
+          })}
+        </Grid>
+      )}
 
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                mt={2.5}
-              >
-                <Typography variant="body2">
-                  Response: <strong>{application.responseTime} ms</strong>
-                </Typography>
-
-                <Typography variant="caption" color="text.secondary">
-                  Checked {application.lastChecked}
-                </Typography>
-              </Stack>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
-      {filteredApplications.length === 0 && (
-        <Card sx={{ p: 5, textAlign: "center", borderRadius: 3 }}>
-          <Typography variant="h6">No applications found</Typography>
-          <Typography color="text.secondary">
-            Change the search text or status filter.
+      {!loading && filteredApplications.length === 0 && (
+        <Card sx={{ p: 4, textAlign: "center", borderRadius: 3, border: "1px dashed rgba(148,163,184,0.6)" }}>
+          <Typography variant="h6" fontWeight={700}>No applications found</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Create the first application for this country using the button above.
           </Typography>
         </Card>
       )}
 
-      <Dialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle>Add new application</DialogTitle>
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ pb: 1.5 }}>Create application</DialogTitle>
 
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField label="Application name" fullWidth required />
-            <TextField label="Owner or team" fullWidth required />
-            <TextField label="Description" fullWidth multiline rows={3} />
-            <TextField label="Production health URL" fullWidth />
-            <TextField label="Pre-production health URL" fullWidth />
-          </Stack>
+          <Box component="form" id="create-application-form" onSubmit={handleApplicationSubmit} noValidate>
+            <Stack spacing={2.8} sx={{ mt: 1 }}>
+              <Box>
+                <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
+                  Application details
+                </Typography>
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                  <TextField label="Application name" name="name" value={formData.name} onChange={handleChange} fullWidth required />
+                  <TextField label="Application code" name="code" value={formData.code} onChange={handleChange} fullWidth required />
+                </Stack>
+
+                <TextField label="Description" name="description" value={formData.description} onChange={handleChange} fullWidth multiline rows={3} required sx={{ mt: 2 }} />
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                  <TextField label="Owner team" name="ownerTeam" value={formData.ownerTeam} onChange={handleChange} fullWidth required />
+                  <TextField label="Documentation URL" name="documentationUrl" value={formData.documentationUrl} onChange={handleChange} fullWidth required />
+                </Stack>
+              </Box>
+
+              <Box>
+                <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
+                  Environment details
+                </Typography>
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                  <FormControl fullWidth>
+                    <InputLabel>Environment</InputLabel>
+                    <Select label="Environment" name="environmentName" value={formData.environmentName} onChange={handleChange}>
+                      <MenuItem value="PRODUCTION">PRODUCTION</MenuItem>
+                      <MenuItem value="PRE_PRODUCTION">PRE_PRODUCTION</MenuItem>
+                      <MenuItem value="STAGING">STAGING</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  <TextField label="Base URL" name="baseUrl" value={formData.baseUrl} onChange={handleChange} fullWidth required />
+                </Stack>
+              </Box>
+
+              <Box>
+                <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
+                  Component details
+                </Typography>
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                  <TextField label="Component name" name="componentName" value={formData.componentName} onChange={handleChange} fullWidth required />
+                  <FormControl fullWidth>
+                    <InputLabel>Component type</InputLabel>
+                    <Select label="Component type" name="componentType" value={formData.componentType} onChange={handleChange}>
+                      <MenuItem value="DATABASE">DATABASE</MenuItem>
+                      <MenuItem value="API">API</MenuItem>
+                      <MenuItem value="CACHE">CACHE</MenuItem>
+                      <MenuItem value="MESSAGE_BROKER">MESSAGE_BROKER</MenuItem>
+                      <MenuItem value="FRONTEND">FRONTEND</MenuItem>
+                      <MenuItem value="BACKEND">BACKEND</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Stack>
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                  <TextField label="Host name" name="hostName" value={formData.hostName} onChange={handleChange} fullWidth required />
+                  <TextField label="Port" name="port" type="number" value={formData.port} onChange={handleChange} fullWidth required />
+                </Stack>
+
+                <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                  <TextField label="Technology" name="technology" value={formData.technology} onChange={handleChange} fullWidth required />
+                  <TextField label="Version" name="version" value={formData.version} onChange={handleChange} fullWidth required />
+                </Stack>
+
+                <FormControlLabel
+                  control={<Checkbox checked={formData.isCritical} onChange={handleChange} name="isCritical" color="primary" />}
+                  label="This is a critical component"
+                  sx={{ mt: 1 }}
+                />
+              </Box>
+            </Stack>
+          </Box>
         </DialogContent>
 
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={() => setDialogOpen(false)}
-          >
-            Create dummy application
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setDialogOpen(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" form="create-application-form" variant="contained" disabled={submitting}>
+            {submitting ? <CircularProgress size={18} color="inherit" /> : "Create application"}
           </Button>
         </DialogActions>
       </Dialog>

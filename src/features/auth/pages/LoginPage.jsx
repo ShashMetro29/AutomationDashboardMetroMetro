@@ -1,8 +1,10 @@
 import { useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   Container,
   Divider,
   FormControlLabel,
@@ -25,6 +27,7 @@ import { Link as RouterLink, useNavigate } from "react-router-dom";
 
 import backgroundImage from "../../../assets/makro-store-background.webp";
 import MakroLogo from "../../../assets/Makro_logo.svg";
+import { loginUser, setStoredAuthSession } from "../../../services/authService";
 
 const COLORS = {
   metroBlue: "#002D72",
@@ -44,12 +47,54 @@ const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const navigate = useNavigate();
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    sessionStorage.setItem("user", JSON.stringify("india"));
-    navigate("/dashboard");
+
+    if (!email.trim() || !password.trim()) {
+      setErrorMessage("Please enter both your email and password.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const response = await loginUser({
+        email: email.trim(),
+        password,
+      });
+
+      const authSession = {
+        accessToken: response?.data?.accessToken ?? "",
+        tokenType: response?.data?.tokenType ?? "Bearer",
+        expiresIn: response?.data?.expiresIn ?? null,
+        user: {
+          ...(response?.data?.user ?? {}),
+          email: response?.data?.user?.email ?? email.trim(),
+          displayName:
+            response?.data?.user?.displayName ??
+            response?.data?.user?.display_name ??
+            email.trim().split("@")[0],
+        },
+        country: response?.data?.country ?? null,
+      };
+
+      setStoredAuthSession(authSession);
+      navigate("/dashboard", { replace: true });
+    } catch (error) {
+      const backendMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Unable to sign in. Please verify your credentials and try again.";
+
+      setErrorMessage(backendMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -171,6 +216,12 @@ const LoginPage = () => {
             </Stack>
 
             <Box component="form" onSubmit={handleLogin} noValidate>
+              {errorMessage ? (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {errorMessage}
+                </Alert>
+              ) : null}
+
               <TextField
                 label="Email address"
                 type="email"
@@ -237,6 +288,7 @@ const LoginPage = () => {
                 type="submit"
                 fullWidth
                 variant="contained"
+                disabled={isSubmitting}
                 sx={{
                   py: 1.4,
                   borderRadius: 2,
@@ -247,7 +299,7 @@ const LoginPage = () => {
                   '&:hover': { background: `linear-gradient(135deg, #F8D600, ${COLORS.metroYellow})` },
                 }}
               >
-                Sign in
+                {isSubmitting ? <CircularProgress size={20} color="inherit" /> : "Sign in"}
               </Button>
 
               <Divider sx={{ my: 2.5, borderColor: "#E7EDF5" }}>

@@ -47,6 +47,7 @@ import {
 
 import { useNavigate } from "react-router-dom";
 import { applications, countries } from "../../../data/dummyData";
+import { getStoredAuthSession } from "../../../services/authService";
 
 import austriaFlag from "../../../assets/austria_new.png";
 import belgiumFlag from "../../../assets/belgium.jpg";
@@ -512,24 +513,36 @@ function DashboardTooltip({ active, payload, label }) {
 
 function DashboardPage() {
   const navigate = useNavigate();
+  const authSession = getStoredAuthSession();
+  const userCountryName = authSession?.country?.name || authSession?.country?.country || null;
 
   const [countryFilter, setCountryFilter] = useState("all");
   const [refreshing, setRefreshing] = useState(false);
   const [notification, setNotification] = useState(false);
   const [lastRefresh, setLastRefresh] = useState("Today at 12:45");
 
-  const visibleCountries = useMemo(() => {
-    if (countryFilter === "all") {
+  const dashboardCountries = useMemo(() => {
+    if (!userCountryName) {
       return countries;
     }
 
     return countries.filter(
+      (country) => country.name.toLowerCase() === userCountryName.toLowerCase()
+    );
+  }, [userCountryName]);
+
+  const visibleCountries = useMemo(() => {
+    if (countryFilter === "all") {
+      return dashboardCountries;
+    }
+
+    return dashboardCountries.filter(
       (country) => country.id === countryFilter
     );
-  }, [countryFilter]);
+  }, [countryFilter, dashboardCountries]);
 
   const totals = useMemo(() => {
-    return countries.reduce(
+    return dashboardCountries.reduce(
       (result, country) => ({
         up: result.up + country.up,
         down: result.down + country.down,
@@ -541,7 +554,7 @@ function DashboardPage() {
         degraded: 0,
       }
     );
-  }, []);
+  }, [dashboardCountries]);
 
   const chartData = useMemo(() => {
     return visibleCountries.map((country) => ({
@@ -831,7 +844,8 @@ function DashboardPage() {
               <CountryCard
                 country={country}
                 onClick={() =>
-                  navigate(`/countries/${country.id}/apps`)
+                 // navigate(`/countries/${country.id}/apps`)
+                 navigate(`/applications`)
                 }
               />
             </Grid>

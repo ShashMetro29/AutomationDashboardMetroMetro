@@ -35,6 +35,13 @@ import {
 
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import MakroLogo from "../../assets/Makro_logo.svg";
+import {
+  clearStoredAuthSession,
+  getAuthUser,
+  getStoredAuthSession,
+  getUserDisplayName,
+  getUserInitials,
+} from "../../services/authService";
 
 const DRAWER_WIDTH = 260;
 
@@ -118,6 +125,19 @@ function MetroAppLayout() {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
+  const currentSession = getStoredAuthSession();
+  const currentUser = getAuthUser();
+  const profileName = getUserDisplayName(currentUser);
+  const profileInitials = getUserInitials(currentUser);
+  const userRole = currentSession?.country?.accessLevel
+    ? currentSession.country.accessLevel
+        .toLowerCase()
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ")
+    : currentUser?.isSuperuser
+      ? "Monitoring Administrator"
+      : "Operations User";
 
   const desktop = useMediaQuery(theme.breakpoints.up("md"));
 
@@ -127,6 +147,12 @@ function MetroAppLayout() {
   const handleNavigate = (path) => {
     navigate(path);
     setMobileOpen(false);
+  };
+
+  const handleLogout = () => {
+    clearStoredAuthSession();
+    setProfileAnchor(null);
+    navigate("/login", { replace: true });
   };
 
   const isSelected = (path) => {
@@ -457,7 +483,7 @@ function MetroAppLayout() {
                   fontWeight: 900,
                 }}
               >
-                SK
+                {profileInitials}
               </Avatar>
 
               <Box
@@ -475,7 +501,7 @@ function MetroAppLayout() {
                   variant="body2"
                   sx={{ color: "#FFFFFF", fontWeight: 700 }}
                 >
-                  Shashank Kalyani
+                  {profileName}
                 </Typography>
 
                 <Typography
@@ -483,7 +509,7 @@ function MetroAppLayout() {
                   variant="caption"
                   sx={{ color: "rgba(255,255,255,0.7)" }}
                 >
-                  Monitoring Administrator
+                  {userRole}
                 </Typography>
               </Box>
             </Stack>
@@ -514,10 +540,10 @@ function MetroAppLayout() {
           >
             <Box sx={{ px: 2, py: 1.25 }}>
               <Typography variant="body2" fontWeight={800}>
-                Shashank Kalyani
+                {profileName}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Monitoring Administrator
+                {userRole}
               </Typography>
             </Box>
 
@@ -540,7 +566,7 @@ function MetroAppLayout() {
             <Divider />
 
             <MenuItem
-              onClick={() => navigate("/login")}
+              onClick={handleLogout}
               sx={{ color: "error.main" }}
             >
               <ListItemIcon sx={{ color: "error.main" }}>
