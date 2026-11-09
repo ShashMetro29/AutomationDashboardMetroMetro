@@ -42,6 +42,7 @@ import {
   createEnvironment,
   getApplicationsByCountry,
 } from "../../../services/applicationService";
+import { getHealthStatusMeta, summarizeApplicationHealth } from "../utils/health";
 
 const initialFormState = {
   countryId: "",
@@ -133,9 +134,10 @@ function ApplicationListPage() {
       const ownerName = String(application.ownerTeam || "").toLowerCase();
       const searchText = search.toLowerCase();
       const searchMatches = appName.includes(searchText) || ownerName.includes(searchText);
+      const healthStatus = summarizeApplicationHealth(application).status;
       const statusMatches =
         statusFilter === "ALL" ||
-        String(application.isActive ? "ACTIVE" : "INACTIVE") === statusFilter;
+        healthStatus === statusFilter;
 
       return countryMatches && searchMatches && statusMatches;
     });
@@ -292,8 +294,9 @@ function ApplicationListPage() {
             <InputLabel>Status</InputLabel>
             <Select label="Status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <MenuItem value="ALL">All statuses</MenuItem>
-              <MenuItem value="ACTIVE">Active</MenuItem>
-              <MenuItem value="INACTIVE">Inactive</MenuItem>
+              <MenuItem value="UP">Healthy</MenuItem>
+              <MenuItem value="DEGRADED">Degraded</MenuItem>
+              <MenuItem value="DOWN">Down</MenuItem>
             </Select>
           </FormControl>
         </Stack>
@@ -311,7 +314,9 @@ function ApplicationListPage() {
               0
             );
             const environmentCount = (application.environments || []).length;
-            const status = application.isActive ? "ACTIVE" : "INACTIVE";
+            const healthSummary = summarizeApplicationHealth(application);
+            const healthMeta = getHealthStatusMeta(healthSummary.status);
+            const activeStatus = application.isActive ? "ACTIVE" : "INACTIVE";
 
             return (
               <Grid key={application.id} size={{ xs: 12, xl: 6 }}>
@@ -333,8 +338,18 @@ function ApplicationListPage() {
                         </Box>
                       </Stack>
 
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Chip label={status} color={application.isActive ? "success" : "default"} size="small" />
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" justifyContent="flex-end">
+                        <Chip
+                          label={healthMeta.label}
+                          color={healthMeta.color}
+                          size="small"
+                          sx={{
+                            backgroundColor: healthMeta.backgroundColor,
+                            color: healthMeta.textColor,
+                            fontWeight: 700,
+                          }}
+                        />
+                        <Chip label={activeStatus} color={application.isActive ? "success" : "default"} size="small" />
                         <IconButton color="primary" onClick={() => navigate(`/applications/${application.id}`)} aria-label="Open application details">
                           <OpenInNew />
                         </IconButton>
@@ -342,7 +357,7 @@ function ApplicationListPage() {
                     </Stack>
 
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 2.2, minHeight: 42 }}>
-                      {application.description || "No description provided."}
+                      {healthSummary.message || application.description || "No description provided."}
                     </Typography>
 
                     <Grid container spacing={2} sx={{ mt: 0.2 }}>
@@ -362,10 +377,10 @@ function ApplicationListPage() {
                         <Box sx={{ p: 1.4, borderRadius: 2, backgroundColor: "rgba(76, 175, 80, 0.06)", border: "1px solid rgba(76,175,80,0.12)" }}>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <DescriptionOutlined fontSize="small" color="success" />
-                            <Typography variant="caption" color="text.secondary">Environments</Typography>
+                            <Typography variant="caption" color="text.secondary">Environment health</Typography>
                           </Stack>
                           <Typography variant="subtitle2" sx={{ mt: 0.6 }}>
-                            {environmentCount} configured
+                            {environmentCount} configured · {healthSummary.healthyEnvironmentCount}/{environmentCount} healthy
                           </Typography>
                         </Box>
                       </Grid>

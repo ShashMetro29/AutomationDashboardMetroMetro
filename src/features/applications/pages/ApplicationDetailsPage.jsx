@@ -25,6 +25,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { getStoredAuthSession } from "../../../services/authService";
 import { getApplicationsByCountry } from "../../../services/applicationService";
+import { getHealthStatusMeta, summarizeApplicationHealth } from "../utils/health";
 
 const normalizeApplication = (application) => ({
   ...application,
@@ -109,16 +110,32 @@ function ApplicationDetailsPage() {
     fetchApplication();
   }, [applicationId, countryId]);
 
+  const healthSummary = useMemo(() => summarizeApplicationHealth(application), [application]);
+
   const environmentSummary = useMemo(() => {
     const environments = Array.isArray(application?.environments) ? application.environments : [];
 
-    return environments.map((environment) => ({
-      id: environment.id,
-      name: environment.name || "Environment",
-      baseUrl: environment.base_url || environment.baseUrl || "Not available",
-      enabled: environment.enabled ?? environment.isActive ?? true,
-      components: Array.isArray(environment.components) ? environment.components : [],
-    }));
+    return environments.map((environment) => {
+      const environmentHealth = environment?.health ?? {};
+      const componentHealthEntries = (Array.isArray(environment?.components) ? environment.components : []).map(
+        (component) => component?.health || {}
+      );
+      const status = summarizeApplicationHealth({ environments: [environment] }).status;
+
+      return {
+        id: environment.id,
+        name: environment.name || "Environment",
+        baseUrl: environment.base_url || environment.baseUrl || "Not available",
+        enabled: environment.enabled ?? environment.isActive ?? true,
+        components: Array.isArray(environment.components) ? environment.components : [],
+        health: environmentHealth,
+        healthStatus: status,
+        statusMeta: getHealthStatusMeta(status),
+        message: environmentHealth.message || (componentHealthEntries.some((item) => item.message) ? componentHealthEntries.find((item) => item.message)?.message : "No health details reported."),
+        latencyMs: environmentHealth.latencyMs ?? componentHealthEntries.reduce((total, item) => total + (Number(item.latencyMs) || 0), 0),
+        checkedAt: environmentHealth.checkedAt || null,
+      };
+    });
   }, [application]);
 
   const totalComponents = useMemo(
@@ -165,6 +182,16 @@ function ApplicationDetailsPage() {
               <Typography variant="h4" fontWeight={800}>
                 {application.name}
               </Typography>
+              <Chip
+                label={getHealthStatusMeta(healthSummary.status).label}
+                color={getHealthStatusMeta(healthSummary.status).color}
+                size="small"
+                sx={{
+                  backgroundColor: getHealthStatusMeta(healthSummary.status).backgroundColor,
+                  color: getHealthStatusMeta(healthSummary.status).textColor,
+                  fontWeight: 700,
+                }}
+              />
               <Chip label={application.isActive ? "ACTIVE" : "INACTIVE"} color={application.isActive ? "success" : "default"} size="small" />
             </Stack>
 
@@ -173,7 +200,7 @@ function ApplicationDetailsPage() {
             </Typography>
 
             <Typography sx={{ mt: 2, maxWidth: 760 }}>
-              {application.description || "No description provided."}
+              {healthSummary.message || application.description || "No description provided."}
             </Typography>
           </Box>
 
@@ -201,7 +228,7 @@ function ApplicationDetailsPage() {
 
       <Grid container spacing={2.5} sx={{ mb: 2 }}>
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <MetricCard title="Status" value={application.isActive ? "Active" : "Inactive"} subtitle="Application health state" icon={<Cloud />} color="#2e7d32" />
+          <MetricCard title="Application health" value={getHealthStatusMeta(healthSummary.status).label} subtitle={healthSummary.message} icon={<Cloud />} color={getHealthStatusMeta(healthSummary.status).textColor} />
         </Grid>
 
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
@@ -231,41 +258,102 @@ function ApplicationDetailsPage() {
                     <Typography variant="h6" fontWeight={800}>
                       {environment.name}
                     </Typography>
-                    <Chip label={environment.enabled ? "Enabled" : "Disabled"} color={environment.enabled ? "success" : "default"} size="small" />
+                    <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="flex-end">
+                      <Chip
+                        label={environment.statusMeta.label}
+                        color={environment.statusMeta.color}
+                        size="small"
+                        sx={{
+                          backgroundColor: environment.statusMeta.backgroundColor,
+                          color: environment.statusMeta.textColor,
+                          fontWeight: 700,
+                        }}
+                      />
+                      <Chip label={environment.enabled ? "Enabled" : "Disabled"} color={environment.enabled ? "success" : "default"} size="small" />
+                    </Stack>
                   </Stack>
 
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                     Base URL: {environment.baseUrl}
                   </Typography>
+
+                  <Box sx={{ mb: 2, p: 1.5, borderRadius: 2, backgroundColor: "rgba(15, 23, 42, 0.03)", border: "1px solid rgba(148, 163, 184, 0.2)" }}>
+                    <Typography variant="caption" color="text.secondary">Environment health</Typography>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1} sx={{ mt: 0.7 }}>
+                      <Typography variant="body2" fontWeight={600}>{environment.message || "No health details reported."}</Typography>
+                      {environment.latencyMs ? (
+                        <Typography variant="body2" color="text.secondary">{environment.latencyMs} ms</Typography>
+                      ) : null}
+                    </Stack>
+                    {environment.checkedAt ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                        Last checked: {new Date(environment.checkedAt).toLocaleString()}
+                      </Typography>
+                    ) : null}
+                  </Box>
 
                   {environment.components.length === 0 ? (
                     <Alert severity="info" sx={{ borderRadius: 2 }}>No components have been registered for this environment.</Alert>
                   ) : (
                     <Stack spacing={1.5}>
-                      {environment.components.map((component) => (
-                        <Box
-                          key={component.id}
-                          sx={{
-                            p: 1.6,
-                            border: "1px solid rgba(148, 163, 184, 0.35)",
-                            borderRadius: 2,
-                            backgroundColor: "rgba(15, 23, 42, 0.015)",
-                          }}
-                        >
-                          <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                            <Typography fontWeight={700}>{component.name}</Typography>
-                            <Chip label={component.is_critical ? "Critical" : "Standard"} size="small" color={component.is_critical ? "error" : "default"} />
-                          </Stack>
+                      {environment.components.map((component) => {
+                        const componentHealth = component.health || {};
+                        const componentStatusMeta = getHealthStatusMeta(componentHealth.status);
 
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                            {component.component_type || component.componentType} · {component.technology} {component.version}
-                          </Typography>
+                        return (
+                          <Box
+                            key={component.id}
+                            sx={{
+                              p: 1.6,
+                              border: "1px solid rgba(148, 163, 184, 0.35)",
+                              borderRadius: 2,
+                              backgroundColor: "rgba(15, 23, 42, 0.015)",
+                            }}
+                          >
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                              <Typography fontWeight={700}>{component.name}</Typography>
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Chip
+                                  label={componentStatusMeta.label}
+                                  size="small"
+                                  color={componentStatusMeta.color}
+                                  sx={{
+                                    backgroundColor: componentStatusMeta.backgroundColor,
+                                    color: componentStatusMeta.textColor,
+                                    fontWeight: 700,
+                                  }}
+                                />
+                                <Chip label={component.is_critical ? "Critical" : "Standard"} size="small" color={component.is_critical ? "error" : "default"} />
+                              </Stack>
+                            </Stack>
 
-                          <Typography variant="body2" color="text.secondary">
-                            {component.host_name || component.hostName}:{component.port}
-                          </Typography>
-                        </Box>
-                      ))}
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                              {component.component_type || component.componentType} · {component.technology} {component.version}
+                            </Typography>
+
+                            <Typography variant="body2" color="text.secondary">
+                              {component.host_name || component.hostName}:{component.port}
+                            </Typography>
+
+                            {componentHealth.message ? (
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                Health: {componentHealth.message}
+                              </Typography>
+                            ) : null}
+
+                            {(componentHealth.latencyMs || componentHealth.code) ? (
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 1 }}>
+                                {componentHealth.code ? (
+                                  <Typography variant="caption" color="text.secondary">Code: {componentHealth.code}</Typography>
+                                ) : null}
+                                {componentHealth.latencyMs ? (
+                                  <Typography variant="caption" color="text.secondary">Latency: {componentHealth.latencyMs} ms</Typography>
+                                ) : null}
+                              </Stack>
+                            ) : null}
+                          </Box>
+                        );
+                      })}
                     </Stack>
                   )}
                 </CardContent>
