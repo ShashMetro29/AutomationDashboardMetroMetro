@@ -74,3 +74,51 @@ export const createComponent = async (payload) => {
 
   return response.data ?? {};
 };
+
+export const updateApplication = async (applicationId, payload) => {
+  const response = await apiClient.patch(`/api/v1/applications/${applicationId}`, payload, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};
+
+export const deleteApplication = async (applicationId) => {
+  const response = await apiClient.delete(`/api/v1/applications/${applicationId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};
+
+export const updateEnvironment = async (environmentId, payload) => {
+  const response = await apiClient.patch(`/api/v1/environments/${environmentId}`, payload, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};
+
+export const deleteEnvironment = async (environmentId) => {
+  const response = await apiClient.delete(`/api/v1/environments/${environmentId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};
+
+export const updateComponent = async (componentId, payload) => {
+  const response = await apiClient.patch(`/api/v1/components/${componentId}`, payload, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};
+
+export const deleteComponent = async (componentId) => {
+  const response = await apiClient.delete(`/api/v1/components/${componentId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  return response.data ?? {};
+};

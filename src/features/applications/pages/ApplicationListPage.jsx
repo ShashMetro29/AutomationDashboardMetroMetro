@@ -36,31 +36,27 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 
 import { getStoredAuthSession } from "../../../services/authService";
-import {
-  createApplication,
-  createComponent,
-  createEnvironment,
-  getApplicationsByCountry,
-} from "../../../services/applicationService";
+import { createApplication, getApplicationsByCountry } from "../../../services/applicationService";
 import { getHealthStatusMeta, summarizeApplicationHealth } from "../utils/health";
 
-const initialFormState = {
-  countryId: "",
+const createEmptyComponent = () => ({
   name: "",
-  code: "",
-  description: "",
-  ownerTeam: "",
-  documentationUrl: "",
-  environmentName: "PRODUCTION",
-  baseUrl: "",
-  componentName: "",
-  componentType: "DATABASE",
+  componentType: "APPLICATION_SERVER",
+  endpoint: "",
   hostName: "",
-  port: "5432",
+  port: "",
   technology: "",
   version: "",
   isCritical: true,
-};
+  enabled: true,
+});
+
+const createEmptyEnvironment = () => ({
+  name: "PRODUCTION",
+  baseUrl: "",
+  enabled: true,
+  components: [createEmptyComponent()],
+});
 
 const normalizeApplication = (application) => ({
   ...application,
@@ -71,6 +67,33 @@ const normalizeApplication = (application) => ({
   environments: Array.isArray(application.environments) ? application.environments : [],
   isActive: application.is_active ?? application.isActive ?? true,
 });
+
+const componentHasValue = (component) => {
+  if (!component) {
+    return false;
+  }
+
+  return Boolean(
+    (component.name || "").trim() ||
+      (component.endpoint || "").trim() ||
+      (component.hostName || "").trim() ||
+      (component.technology || "").trim() ||
+      (component.version || "").trim()
+  );
+};
+
+const environmentHasValue = (environment) => {
+  if (!environment) {
+    return false;
+  }
+
+  const hasEnvironmentData = Boolean((environment.name || "").trim() || (environment.baseUrl || "").trim());
+  const hasComponentData = Array.isArray(environment.components)
+    ? environment.components.some((component) => componentHasValue(component))
+    : false;
+
+  return hasEnvironmentData || hasComponentData;
+};
 
 function ApplicationListPage() {
   const navigate = useNavigate();
@@ -85,7 +108,15 @@ function ApplicationListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [formData, setFormData] = useState(initialFormState);
+  const [formData, setFormData] = useState({
+    countryId: "",
+    name: "",
+    code: "",
+    description: "",
+    ownerTeam: "",
+    documentationUrl: "",
+    environments: [createEmptyEnvironment()],
+  });
 
   const resolvedCountryId = Number(countryId || session?.country?.id || 0);
   const selectedCountry = session?.country?.name || "Country";
@@ -135,45 +166,154 @@ function ApplicationListPage() {
       const searchText = search.toLowerCase();
       const searchMatches = appName.includes(searchText) || ownerName.includes(searchText);
       const healthStatus = summarizeApplicationHealth(application).status;
-      const statusMatches =
-        statusFilter === "ALL" ||
-        healthStatus === statusFilter;
+      const statusMatches = statusFilter === "ALL" || healthStatus === statusFilter;
 
       return countryMatches && searchMatches && statusMatches;
     });
   }, [applications, countryId, resolvedCountryId, search, statusFilter]);
 
-  const handleChange = (event) => {
-    const { name, value, type, checked } = event.target;
+  const handleMainFieldChange = (event) => {
+    const { name, value } = event.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : value,
+      [name]: value,
     }));
+  };
+
+  const updateEnvironmentField = (environmentIndex, fieldName, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: prev.environments.map((environment, index) =>
+        index === environmentIndex ? { ...environment, [fieldName]: value } : environment
+      ),
+    }));
+  };
+
+  const updateComponentField = (environmentIndex, componentIndex, fieldName, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: prev.environments.map((environment, envIndex) => {
+        if (envIndex !== environmentIndex) {
+          return environment;
+        }
+
+        return {
+          ...environment,
+          components: environment.components.map((component, compIndex) =>
+            compIndex === componentIndex ? { ...component, [fieldName]: value } : component
+          ),
+        };
+      }),
+    }));
+  };
+
+  const addEnvironment = () => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: [...prev.environments, createEmptyEnvironment()],
+    }));
+  };
+
+  const removeEnvironment = (environmentIndex) => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: prev.environments.filter((_, index) => index !== environmentIndex),
+    }));
+  };
+
+  const addComponent = (environmentIndex) => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: prev.environments.map((environment, index) =>
+        index === environmentIndex
+          ? { ...environment, components: [...environment.components, createEmptyComponent()] }
+          : environment
+      ),
+    }));
+  };
+
+  const removeComponent = (environmentIndex, componentIndex) => {
+    setFormData((prev) => ({
+      ...prev,
+      environments: prev.environments.map((environment, envIndex) => {
+        if (envIndex !== environmentIndex) {
+          return environment;
+        }
+
+        const nextComponents = environment.components.filter((_, index) => index !== componentIndex);
+        return {
+          ...environment,
+          components: nextComponents.length ? nextComponents : [createEmptyComponent()],
+        };
+      }),
+    }));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      countryId: resolvedCountryId ? String(resolvedCountryId) : "",
+      name: "",
+      code: "",
+      description: "",
+      ownerTeam: "",
+      documentationUrl: "",
+      environments: [createEmptyEnvironment()],
+    });
   };
 
   const handleApplicationSubmit = async (event) => {
     event.preventDefault();
 
-    const requiredFields = [
-      formData.name,
-      formData.code,
-      formData.description,
-      formData.ownerTeam,
-      formData.documentationUrl,
-      formData.baseUrl,
-      formData.componentName,
-      formData.hostName,
-      formData.technology,
-      formData.version,
-    ];
-
-    if (requiredFields.some((field) => !String(field).trim())) {
-      setErrorMessage("Please complete all the required application, environment, and component fields.");
+    if (!resolvedCountryId) {
+      setErrorMessage("No country is linked to this user. Please log in again.");
       return;
     }
 
-    if (!resolvedCountryId) {
-      setErrorMessage("No country is linked to this user. Please log in again.");
+    const trimmedName = formData.name.trim();
+    const trimmedCode = formData.code.trim();
+    const trimmedDescription = formData.description.trim();
+    const trimmedOwnerTeam = formData.ownerTeam.trim();
+    const trimmedDocumentation = formData.documentationUrl.trim();
+
+    if (!trimmedName || !trimmedCode || !trimmedDescription || !trimmedOwnerTeam || !trimmedDocumentation) {
+      setErrorMessage("Please fill in all application details before creating this record.");
+      return;
+    }
+
+    const filteredEnvironments = formData.environments
+      .map((environment) => {
+        const validComponents = (environment.components || []).filter((component) => componentHasValue(component));
+
+        if (!validComponents.length) {
+          return null;
+        }
+
+        return {
+          name: String(environment.name || "PRODUCTION").trim() || "PRODUCTION",
+          baseUrl: String(environment.baseUrl || "").trim(),
+          enabled: Boolean(environment.enabled),
+          components: validComponents.map((component) => ({
+            name: String(component.name || "").trim(),
+            componentType: component.componentType || "APPLICATION_SERVER",
+            endpoint: component.endpoint ? String(component.endpoint).trim() : undefined,
+            hostName: component.hostName ? String(component.hostName).trim() : undefined,
+            port: component.port ? Number(component.port) : undefined,
+            technology: component.technology ? String(component.technology).trim() : undefined,
+            version: component.version ? String(component.version).trim() : undefined,
+            isCritical: Boolean(component.isCritical),
+            enabled: Boolean(component.enabled),
+          })),
+        };
+      })
+      .filter(Boolean);
+
+    if (!filteredEnvironments.length) {
+      setErrorMessage("Add at least one environment with a valid component before submitting the application.");
+      return;
+    }
+
+    if (filteredEnvironments.some((environment) => !environment.baseUrl)) {
+      setErrorMessage("Each environment needs a base URL so the environment can be monitored.");
       return;
     }
 
@@ -182,56 +322,20 @@ function ApplicationListPage() {
     setSuccessMessage("");
 
     try {
-      const applicationPayload = {
+      const payload = {
         countryId: Number(resolvedCountryId),
-        name: formData.name.trim(),
-        code: formData.code.trim(),
-        description: formData.description.trim(),
-        ownerTeam: formData.ownerTeam.trim(),
-        documentationUrl: formData.documentationUrl.trim(),
+        name: trimmedName,
+        code: trimmedCode,
+        description: trimmedDescription,
+        ownerTeam: trimmedOwnerTeam,
+        documentationUrl: trimmedDocumentation,
+        environments: filteredEnvironments,
       };
 
-      const createdApplication = await createApplication(applicationPayload);
-      const applicationId =
-        createdApplication?.id ??
-        createdApplication?.applicationId ??
-        createdApplication?.data?.id ??
-        createdApplication?.data?.applicationId;
-
-      if (!applicationId) {
-        throw new Error("Application was created without an ID.");
-      }
-
-      const createdEnvironment = await createEnvironment({
-        applicationId: Number(applicationId),
-        name: formData.environmentName,
-        baseUrl: formData.baseUrl.trim(),
-      });
-
-      const environmentId =
-        createdEnvironment?.id ??
-        createdEnvironment?.environmentId ??
-        createdEnvironment?.data?.id ??
-        createdEnvironment?.data?.environmentId;
-
-      if (!environmentId) {
-        throw new Error("Environment was created without an ID.");
-      }
-
-      await createComponent({
-        environmentId: Number(environmentId),
-        name: formData.componentName.trim(),
-        componentType: formData.componentType,
-        hostName: formData.hostName.trim(),
-        port: Number(formData.port),
-        technology: formData.technology.trim(),
-        version: formData.version.trim(),
-        isCritical: Boolean(formData.isCritical),
-      });
-
-      setSuccessMessage("Application, environment, and component were created successfully.");
+      await createApplication(payload);
+      setSuccessMessage("Application, environments, and components were created successfully.");
       setDialogOpen(false);
-      setFormData(initialFormState);
+      resetForm();
       await fetchApplications();
     } catch (error) {
       setErrorMessage(
@@ -257,7 +361,7 @@ function ApplicationListPage() {
         </Box>
 
         <Button variant="contained" size="large" startIcon={<Add />} onClick={() => setDialogOpen(true)}>
-          Add application
+          New application
         </Button>
       </Stack>
 
@@ -418,7 +522,7 @@ function ApplicationListPage() {
         </Card>
       )}
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="md">
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="lg">
         <DialogTitle sx={{ pb: 1.5 }}>Create application</DialogTitle>
 
         <DialogContent>
@@ -430,73 +534,113 @@ function ApplicationListPage() {
                 </Typography>
 
                 <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-                  <TextField label="Application name" name="name" value={formData.name} onChange={handleChange} fullWidth required />
-                  <TextField label="Application code" name="code" value={formData.code} onChange={handleChange} fullWidth required />
+                  <TextField label="Application name" name="name" value={formData.name} onChange={handleMainFieldChange} fullWidth required />
+                  <TextField label="Application code" name="code" value={formData.code} onChange={handleMainFieldChange} fullWidth required />
                 </Stack>
 
-                <TextField label="Description" name="description" value={formData.description} onChange={handleChange} fullWidth multiline rows={3} required sx={{ mt: 2 }} />
+                <TextField label="Description" name="description" value={formData.description} onChange={handleMainFieldChange} fullWidth multiline rows={3} required sx={{ mt: 2 }} />
 
                 <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
-                  <TextField label="Owner team" name="ownerTeam" value={formData.ownerTeam} onChange={handleChange} fullWidth required />
-                  <TextField label="Documentation URL" name="documentationUrl" value={formData.documentationUrl} onChange={handleChange} fullWidth required />
+                  <TextField label="Owner team" name="ownerTeam" value={formData.ownerTeam} onChange={handleMainFieldChange} fullWidth required />
+                  <TextField label="Documentation URL" name="documentationUrl" value={formData.documentationUrl} onChange={handleMainFieldChange} fullWidth required />
                 </Stack>
               </Box>
 
-              <Box>
-                <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
-                  Environment details
-                </Typography>
+              {formData.environments.map((environment, environmentIndex) => (
+                <Box key={`environment-${environmentIndex}`} sx={{ p: 2, border: "1px solid rgba(148,163,184,0.35)", borderRadius: 3, backgroundColor: "rgba(15, 23, 42, 0.012)" }}>
+                  <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={1} sx={{ mb: 2 }}>
+                    <Typography variant="subtitle1" fontWeight={800}>
+                      Environment {environmentIndex + 1}
+                    </Typography>
+                    {formData.environments.length > 1 ? (
+                      <Button color="error" size="small" onClick={() => removeEnvironment(environmentIndex)}>
+                        Remove environment
+                      </Button>
+                    ) : null}
+                  </Stack>
 
-                <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-                  <FormControl fullWidth>
-                    <InputLabel>Environment</InputLabel>
-                    <Select label="Environment" name="environmentName" value={formData.environmentName} onChange={handleChange}>
-                      <MenuItem value="PRODUCTION">PRODUCTION</MenuItem>
-                      <MenuItem value="PRE_PRODUCTION">PRE_PRODUCTION</MenuItem>
-                      <MenuItem value="STAGING">STAGING</MenuItem>
-                    </Select>
-                  </FormControl>
+                  <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                    <FormControl fullWidth>
+                      <InputLabel>Environment</InputLabel>
+                      <Select label="Environment" value={environment.name} onChange={(event) => updateEnvironmentField(environmentIndex, "name", event.target.value)}>
+                        <MenuItem value="PRODUCTION">PRODUCTION</MenuItem>
+                        <MenuItem value="PRE_PRODUCTION">PRE_PRODUCTION</MenuItem>
+                        <MenuItem value="STAGING">STAGING</MenuItem>
+                        <MenuItem value="QA">QA</MenuItem>
+                        <MenuItem value="DEVELOPMENT">DEVELOPMENT</MenuItem>
+                      </Select>
+                    </FormControl>
 
-                  <TextField label="Base URL" name="baseUrl" value={formData.baseUrl} onChange={handleChange} fullWidth required />
-                </Stack>
-              </Box>
+                    <TextField label="Base URL" value={environment.baseUrl} onChange={(event) => updateEnvironmentField(environmentIndex, "baseUrl", event.target.value)} fullWidth required />
+                  </Stack>
 
-              <Box>
-                <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
-                  Component details
-                </Typography>
+                  <FormControlLabel
+                    control={<Checkbox checked={Boolean(environment.enabled)} onChange={(event) => updateEnvironmentField(environmentIndex, "enabled", event.target.checked)} color="primary" />}
+                    label="Environment enabled"
+                    sx={{ mt: 1 }}
+                  />
 
-                <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-                  <TextField label="Component name" name="componentName" value={formData.componentName} onChange={handleChange} fullWidth required />
-                  <FormControl fullWidth>
-                    <InputLabel>Component type</InputLabel>
-                    <Select label="Component type" name="componentType" value={formData.componentType} onChange={handleChange}>
-                      <MenuItem value="DATABASE">DATABASE</MenuItem>
-                      <MenuItem value="API">API</MenuItem>
-                      <MenuItem value="CACHE">CACHE</MenuItem>
-                      <MenuItem value="MESSAGE_BROKER">MESSAGE_BROKER</MenuItem>
-                      <MenuItem value="FRONTEND">FRONTEND</MenuItem>
-                      <MenuItem value="BACKEND">BACKEND</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Stack>
+                  <Box sx={{ mt: 2.5 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.4 }}>
+                      <Typography variant="subtitle2" fontWeight={800}>Components</Typography>
+                      <Button size="small" variant="outlined" startIcon={<Add />} onClick={() => addComponent(environmentIndex)}>
+                        Add component
+                      </Button>
+                    </Stack>
 
-                <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
-                  <TextField label="Host name" name="hostName" value={formData.hostName} onChange={handleChange} fullWidth required />
-                  <TextField label="Port" name="port" type="number" value={formData.port} onChange={handleChange} fullWidth required />
-                </Stack>
+                    <Stack spacing={2}>
+                      {environment.components.map((component, componentIndex) => (
+                        <Box key={`component-${environmentIndex}-${componentIndex}`} sx={{ p: 1.6, border: "1px solid rgba(148,163,184,0.25)", borderRadius: 2, backgroundColor: "rgba(255,255,255,0.7)" }}>
+                          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={1} sx={{ mb: 1.2 }}>
+                            <Typography variant="subtitle2" fontWeight={700}>Component {componentIndex + 1}</Typography>
+                            {environment.components.length > 1 ? (
+                              <Button color="error" size="small" onClick={() => removeComponent(environmentIndex, componentIndex)}>
+                                Remove
+                              </Button>
+                            ) : null}
+                          </Stack>
 
-                <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
-                  <TextField label="Technology" name="technology" value={formData.technology} onChange={handleChange} fullWidth required />
-                  <TextField label="Version" name="version" value={formData.version} onChange={handleChange} fullWidth required />
-                </Stack>
+                          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                            <TextField label="Component name" value={component.name} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "name", event.target.value)} fullWidth required />
+                            <FormControl fullWidth>
+                              <InputLabel>Component type</InputLabel>
+                              <Select label="Component type" value={component.componentType} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "componentType", event.target.value)}>
+                                <MenuItem value="APPLICATION_SERVER">APPLICATION_SERVER</MenuItem>
+                                <MenuItem value="DATABASE">DATABASE</MenuItem>
+                                <MenuItem value="INTERFACE">INTERFACE</MenuItem>
+                                <MenuItem value="CACHE">CACHE</MenuItem>
+                                <MenuItem value="MESSAGE_BROKER">MESSAGE_BROKER</MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Stack>
 
-                <FormControlLabel
-                  control={<Checkbox checked={formData.isCritical} onChange={handleChange} name="isCritical" color="primary" />}
-                  label="This is a critical component"
-                  sx={{ mt: 1 }}
-                />
-              </Box>
+                          <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                            <TextField label="Endpoint" value={component.endpoint || ""} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "endpoint", event.target.value)} fullWidth />
+                            <TextField label="Host name" value={component.hostName || ""} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "hostName", event.target.value)} fullWidth />
+                          </Stack>
+
+                          <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                            <TextField label="Port" type="number" value={component.port || ""} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "port", event.target.value)} fullWidth />
+                            <TextField label="Technology" value={component.technology || ""} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "technology", event.target.value)} fullWidth />
+                          </Stack>
+
+                          <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2 }}>
+                            <TextField label="Version" value={component.version || ""} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "version", event.target.value)} fullWidth />
+                            <FormControlLabel
+                              control={<Checkbox checked={Boolean(component.isCritical)} onChange={(event) => updateComponentField(environmentIndex, componentIndex, "isCritical", event.target.checked)} color="primary" />}
+                              label="Critical"
+                            />
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+                </Box>
+              ))}
+
+              <Button variant="outlined" startIcon={<Add />} onClick={addEnvironment}>
+                Add environment
+              </Button>
             </Stack>
           </Box>
         </DialogContent>
