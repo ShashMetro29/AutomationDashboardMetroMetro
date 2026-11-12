@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { getCountryIdFromSession, normalizeCountryId } from "../utils/countryUtils";
+
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3001",
   timeout: Number(import.meta.env.VITE_API_TIMEOUT || 15000),
@@ -7,6 +9,8 @@ const apiClient = axios.create({
     "Content-Type": "application/json",
   },
 });
+
+export { getCountryIdFromSession, normalizeCountryId };
 
 export const getStoredAuthSession = () => {
   const rawSession = localStorage.getItem("authSession");

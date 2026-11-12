@@ -35,8 +35,14 @@ import {
 } from "@mui/icons-material";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { getStoredAuthSession } from "../../../services/authService";
-import { createApplication, getApplicationsByCountry } from "../../../services/applicationService";
+import { countries } from "../../../data/dummyData";
+import { getCountryIdFromSession, getStoredAuthSession } from "../../../services/authService";
+import {
+  createApplication,
+  createComponent,
+  createEnvironment,
+  getApplicationsByCountry,
+} from "../../../services/applicationService";
 import { getHealthStatusMeta, summarizeApplicationHealth } from "../utils/health";
 
 const createEmptyComponent = () => ({
@@ -51,8 +57,10 @@ const createEmptyComponent = () => ({
   enabled: true,
 });
 
-const createEmptyEnvironment = () => ({
-  name: "PRODUCTION",
+const allowedEnvironmentNames = ["PRODUCTION", "PRE_PRODUCTION"];
+
+const createEmptyEnvironment = (name = "PRODUCTION") => ({
+  name,
   baseUrl: "",
   enabled: true,
   components: [createEmptyComponent()],
@@ -118,8 +126,14 @@ function ApplicationListPage() {
     environments: [createEmptyEnvironment()],
   });
 
-  const resolvedCountryId = Number(countryId || session?.country?.id || 0);
-  const selectedCountry = session?.country?.name || "Country";
+  const resolvedCountryId =
+    (countryId && countryId !== "all" && countryId !== "ALL"
+      ? countryId
+      : getCountryIdFromSession(session)) ?? null;
+  const selectedCountry =
+    (typeof session?.country === "object" && session.country?.name) ||
+    countries.find((country) => String(country.id) === String(resolvedCountryId))?.name ||
+    "Country";
 
   const fetchApplications = async () => {
     if (!resolvedCountryId) {
@@ -208,10 +222,29 @@ function ApplicationListPage() {
   };
 
   const addEnvironment = () => {
-    setFormData((prev) => ({
-      ...prev,
-      environments: [...prev.environments, createEmptyEnvironment()],
-    }));
+    setFormData((prev) => {
+      const existingNames = new Set(
+        (prev.environments || []).map((environment) =>
+          String(environment.name || "").trim().toUpperCase().replace(/-/g, "_")
+        )
+      );
+
+      const nextName =
+        !existingNames.has("PRODUCTION")
+          ? "PRODUCTION"
+          : !existingNames.has("PRE_PRODUCTION")
+            ? "PRE_PRODUCTION"
+            : null;
+
+      if (!nextName) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        environments: [...prev.environments, createEmptyEnvironment(nextName)],
+      };
+    });
   };
 
   const removeEnvironment = (environmentIndex) => {
@@ -282,24 +315,33 @@ function ApplicationListPage() {
 
     const filteredEnvironments = formData.environments
       .map((environment) => {
+        const normalizedName = String(environment.name || "PRODUCTION").trim().toUpperCase().replace(/-/g, "_");
         const validComponents = (environment.components || []).filter((component) => componentHasValue(component));
 
+        if (!allowedEnvironmentNames.includes(normalizedName)) {
+          return { invalid: `Environment name must be PRODUCTION or PRE_PRODUCTION. Received: ${environment.name || "unknown"}` };
+        }
+
         if (!validComponents.length) {
-          return null;
+          return { invalid: "Each environment must include at least one valid component before submission." };
+        }
+
+        if (!String(environment.baseUrl || "").trim()) {
+          return { invalid: "Each environment needs a base URL so the environment can be monitored." };
         }
 
         return {
-          name: String(environment.name || "PRODUCTION").trim() || "PRODUCTION",
+          name: normalizedName,
           baseUrl: String(environment.baseUrl || "").trim(),
           enabled: Boolean(environment.enabled),
           components: validComponents.map((component) => ({
             name: String(component.name || "").trim(),
             componentType: component.componentType || "APPLICATION_SERVER",
-            endpoint: component.endpoint ? String(component.endpoint).trim() : undefined,
-            hostName: component.hostName ? String(component.hostName).trim() : undefined,
+            endpoint: String(component.endpoint || "").trim(),
+            hostName: String(component.hostName || "").trim(),
             port: component.port ? Number(component.port) : undefined,
-            technology: component.technology ? String(component.technology).trim() : undefined,
-            version: component.version ? String(component.version).trim() : undefined,
+            technology: String(component.technology || "").trim(),
+            version: String(component.version || "").trim(),
             isCritical: Boolean(component.isCritical),
             enabled: Boolean(component.enabled),
           })),
@@ -307,13 +349,25 @@ function ApplicationListPage() {
       })
       .filter(Boolean);
 
-    if (!filteredEnvironments.length) {
-      setErrorMessage("Add at least one environment with a valid component before submitting the application.");
+    const invalidEnvironment = filteredEnvironments.find((environment) => environment?.invalid);
+    if (invalidEnvironment) {
+      setErrorMessage(invalidEnvironment.invalid);
       return;
     }
 
-    if (filteredEnvironments.some((environment) => !environment.baseUrl)) {
-      setErrorMessage("Each environment needs a base URL so the environment can be monitored.");
+    const environmentNameCounts = new Map();
+    for (const environment of filteredEnvironments) {
+      environmentNameCounts.set(environment.name, (environmentNameCounts.get(environment.name) || 0) + 1);
+    }
+
+    const duplicateEnvironment = [...environmentNameCounts.entries()].find(([, count]) => count > 1);
+    if (duplicateEnvironment) {
+      setErrorMessage(`Only one ${duplicateEnvironment[0]} environment is allowed per application.`);
+      return;
+    }
+
+    if (!filteredEnvironments.length) {
+      setErrorMessage("Add at least one valid PRODUCTION or PRE_PRODUCTION environment before submitting the application.");
       return;
     }
 
@@ -322,18 +376,53 @@ function ApplicationListPage() {
     setSuccessMessage("");
 
     try {
-      const payload = {
+      const applicationPayload = {
         countryId: Number(resolvedCountryId),
         name: trimmedName,
         code: trimmedCode,
         description: trimmedDescription,
         ownerTeam: trimmedOwnerTeam,
         documentationUrl: trimmedDocumentation,
-        environments: filteredEnvironments,
       };
 
-      await createApplication(payload);
-      setSuccessMessage("Application, environments, and components were created successfully.");
+      const createdApplication = await createApplication(applicationPayload);
+      const applicationId = createdApplication?.id ?? createdApplication?.applicationId ?? createdApplication?.data?.id;
+
+      if (!applicationId) {
+        throw new Error("Application was created without a valid identifier.");
+      }
+
+      for (const environment of filteredEnvironments) {
+        const createdEnvironment = await createEnvironment({
+          applicationId: Number(applicationId),
+          name: environment.name,
+          baseUrl: environment.baseUrl,
+          enabled: environment.enabled,
+        });
+
+        const environmentId = createdEnvironment?.id ?? createdEnvironment?.environmentId ?? createdEnvironment?.data?.id;
+
+        if (!environmentId) {
+          throw new Error(`Environment ${environment.name} was created without a valid identifier.`);
+        }
+
+        for (const component of environment.components) {
+          await createComponent({
+            environmentId: Number(environmentId),
+            name: component.name,
+            componentType: component.componentType,
+            endpoint: component.endpoint,
+            hostName: component.hostName,
+            port: Number(component.port),
+            technology: component.technology,
+            version: component.version,
+            isCritical: Boolean(component.isCritical),
+            enabled: Boolean(component.enabled),
+          });
+        }
+      }
+
+      setSuccessMessage("Application, environment records, and components were created successfully.");
       setDialogOpen(false);
       resetForm();
       await fetchApplications();
@@ -341,7 +430,7 @@ function ApplicationListPage() {
       setErrorMessage(
         error?.response?.data?.message ||
           error?.message ||
-          "Unable to create the application. Please review the values and try again."
+          "Unable to create the application hierarchy. Please review the values and try again."
       );
     } finally {
       setSubmitting(false);
@@ -523,14 +612,17 @@ function ApplicationListPage() {
       )}
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="lg">
-        <DialogTitle sx={{ pb: 1.5 }}>Create application</DialogTitle>
+        <DialogTitle sx={{ pb: 1.5 }}>Create application hierarchy</DialogTitle>
 
         <DialogContent>
           <Box component="form" id="create-application-form" onSubmit={handleApplicationSubmit} noValidate>
             <Stack spacing={2.8} sx={{ mt: 1 }}>
               <Box>
                 <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.4 }}>
-                  Application details
+                  1. Application details
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.6 }}>
+                  Create the application first, then add PRODUCTION / PRE_PRODUCTION environments, and finally attach components to each environment.
                 </Typography>
 
                 <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
@@ -563,11 +655,11 @@ function ApplicationListPage() {
                     <FormControl fullWidth>
                       <InputLabel>Environment</InputLabel>
                       <Select label="Environment" value={environment.name} onChange={(event) => updateEnvironmentField(environmentIndex, "name", event.target.value)}>
-                        <MenuItem value="PRODUCTION">PRODUCTION</MenuItem>
-                        <MenuItem value="PRE_PRODUCTION">PRE_PRODUCTION</MenuItem>
-                        <MenuItem value="STAGING">STAGING</MenuItem>
-                        <MenuItem value="QA">QA</MenuItem>
-                        <MenuItem value="DEVELOPMENT">DEVELOPMENT</MenuItem>
+                        {allowedEnvironmentNames.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
 
