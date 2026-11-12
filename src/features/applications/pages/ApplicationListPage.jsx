@@ -126,17 +126,21 @@ function ApplicationListPage() {
     environments: [createEmptyEnvironment()],
   });
 
-  const resolvedCountryId =
-    (countryId && countryId !== "all" && countryId !== "ALL"
+  const rawCountryId =
+    countryId && countryId !== "all" && countryId !== "ALL"
       ? countryId
-      : getCountryIdFromSession(session)) ?? null;
+      : getCountryIdFromSession(session);
+
+  const resolvedCountryId = Number(rawCountryId);
+  const hasResolvedCountry = Number.isFinite(resolvedCountryId) && resolvedCountryId > 0;
+
   const selectedCountry =
     (typeof session?.country === "object" && session.country?.name) ||
     countries.find((country) => String(country.id) === String(resolvedCountryId))?.name ||
     "Country";
 
   const fetchApplications = async () => {
-    if (!resolvedCountryId) {
+    if (!hasResolvedCountry) {
       setApplications([]);
       return;
     }
@@ -168,9 +172,9 @@ function ApplicationListPage() {
   useEffect(() => {
     setFormData((prev) => ({
       ...prev,
-      countryId: resolvedCountryId ? String(resolvedCountryId) : "",
+      countryId: hasResolvedCountry ? String(resolvedCountryId) : "",
     }));
-  }, [resolvedCountryId]);
+  }, [hasResolvedCountry, resolvedCountryId]);
 
   const filteredApplications = useMemo(() => {
     return applications.filter((application) => {
@@ -522,7 +526,12 @@ function ApplicationListPage() {
                         </Box>
 
                         <Box>
-                          <Typography variant="h6" fontWeight={800}>
+                          <Typography
+                            variant="h6"
+                            fontWeight={800}
+                            sx={{ cursor: "pointer" }}
+                            onClick={() => navigate(`/applications/${application.id}?countryId=${resolvedCountryId}`)}
+                          >
                             {application.name}
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
@@ -543,7 +552,11 @@ function ApplicationListPage() {
                           }}
                         />
                         <Chip label={activeStatus} color={application.isActive ? "success" : "default"} size="small" />
-                        <IconButton color="primary" onClick={() => navigate(`/applications/${application.id}`)} aria-label="Open application details">
+                        <IconButton
+                          color="primary"
+                          onClick={() => navigate(`/applications/${application.id}?countryId=${resolvedCountryId}`)}
+                          aria-label="Open application details"
+                        >
                           <OpenInNew />
                         </IconButton>
                       </Stack>

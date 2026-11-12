@@ -51,12 +51,12 @@ import { getStoredAuthSession } from "../../../services/authService";
 
 import austriaFlag from "../../../assets/austria_new.png";
 import belgiumFlag from "../../../assets/belgium.jpg";
-import franceFlag from "../../../assets/France.png";
+import franceFlag from "../../../assets/France_new.png";
 import germanyFlag from "../../../assets/germany.png";
 import italyFlag from "../../../assets/italy.jpg";
 import netherlandsFlag from "../../../assets/netherlands.png";
 import portugalFlag from "../../../assets/portugal.png";
-import spainFlag from "../../../assets/Spain.png";
+import spainFlag from "../../../assets/spain_new.jpg";
 
 const COLORS = {
   metroBlue: "#002D72",
@@ -73,14 +73,14 @@ const COLORS = {
 };
 
 const countryFlagMap = {
-  france: franceFlag,
-  germany: germanyFlag,
-  netherlands: netherlandsFlag,
-  portugal: portugalFlag,
-  spain: spainFlag,
-  italy: italyFlag,
-  belgium: belgiumFlag,
-  austria: austriaFlag,
+  1: portugalFlag,
+  2: netherlandsFlag,
+  3: germanyFlag,
+  4: franceFlag,
+  5: spainFlag,
+  6: italyFlag,
+  7: franceFlag,
+  8: spainFlag,
 };
 
 function SummaryCard({
@@ -522,11 +522,13 @@ function DashboardPage() {
   const [lastRefresh, setLastRefresh] = useState("Today at 12:45");
 
   const dashboardCountries = useMemo(() => {
+    const visibleCountries = countries.filter((country) => country.visible !== false);
+
     if (!userCountryName) {
-      return countries;
+      return visibleCountries;
     }
 
-    return countries.filter(
+    return visibleCountries.filter(
       (country) => country.name.toLowerCase() === userCountryName.toLowerCase()
     );
   }, [userCountryName]);
@@ -843,10 +845,7 @@ function DashboardPage() {
             >
               <CountryCard
                 country={country}
-                onClick={() =>
-                 // navigate(`/countries/${country.id}/apps`)
-                 navigate(`/applications`)
-                }
+                onClick={() => navigate(`/countries/${country.id}/apps`)}
               />
             </Grid>
           ))}

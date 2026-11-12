@@ -34,7 +34,7 @@ import {
   Public,
   SaveOutlined,
 } from "@mui/icons-material";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { getStoredAuthSession } from "../../../services/authService";
 import {
@@ -124,6 +124,7 @@ function MetricCard({ title, value, subtitle, icon, color }) {
 
 function ApplicationDetailsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { applicationId } = useParams();
   const session = getStoredAuthSession();
 
@@ -147,7 +148,8 @@ function ApplicationDetailsPage() {
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const countryId = Number(session?.country?.id || 0);
+  const countryIdFromQuery = Number(new URLSearchParams(location.search).get("countryId"));
+  const countryId = Number.isFinite(countryIdFromQuery) ? countryIdFromQuery : Number(session?.country?.id || 0);
 
   const loadApplication = async () => {
     if (!countryId || !applicationId) {

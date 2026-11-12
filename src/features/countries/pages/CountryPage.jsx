@@ -19,8 +19,10 @@ function CountryPage() {
   const [search, setSearch] = useState("");
 
   const filteredCountries = useMemo(() => {
-    return countries.filter((country) =>
-      country.name.toLowerCase().includes(search.toLowerCase())
+    return countries.filter(
+      (country) =>
+        country.visible !== false &&
+        country.name.toLowerCase().includes(search.toLowerCase())
     );
   }, [search]);
 
